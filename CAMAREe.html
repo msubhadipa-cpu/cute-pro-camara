@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>💖 Cute Camera Connect</title>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial;
+      background: linear-gradient(135deg, #ff9a9e, #fad0c4);
+      text-align: center;
+      color: white;
+    }
+    h1 { margin-top: 10px; }
+
+    video {
+      width: 90%;
+      max-width: 300px;
+      border-radius: 15px;
+      margin: 10px;
+      border: 3px solid white;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      border: none;
+      border-radius: 10px;
+      background: #ff4b5c;
+      color: white;
+      font-size: 16px;
+    }
+
+    input {
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      width: 200px;
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>💖 Cute Camera Connect</h1>
+
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
+
+<br>
+
+<button onclick="startCamera()">📷 Start Camera</button>
+<button onclick="createRoom()">💌 Create Room</button>
+
+<br><br>
+
+<input id="roomInput" placeholder="Enter Room Code">
+<button onclick="joinRoom()">🔗 Join Room</button>
+
+<h3 id="roomIdDisplay"></h3>
+
+<script>
+  // 🔥 Firebase Config (নিজেরটা বসাও)
+  const firebaseConfig = {
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+
+  let pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  });
+
+  let localStream;
+
+  const localVideo = document.getElementById("localVideo");
+  const remoteVideo = document.getElementById("remoteVideo");
+
+  // 📷 Start Camera
+  async function startCamera() {
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+
+    localVideo.srcObject = localStream;
+
+    localStream.getTracks().forEach(track => {
+      pc.addTrack(track, localStream);
+    });
+
+    pc.ontrack = event => {
+      remoteVideo.srcObject = event.streams[0];
+    };
+  }
+
+  // 💌 Create Room
+  async function createRoom() {
+    const callDoc = db.collection("calls").doc();
+    const offerCandidates = callDoc.collection("offerCandidates");
+    const answerCandidates = callDoc.collection("answerCandidates");
+
+    document.getElementById("roomIdDisplay").innerText =
+      "Room Code: " + callDoc.id;
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        offerCandidates.add(event.candidate.toJSON());
+      }
+    };
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    await callDoc.set({
+      offer: {
+        type: offer.type,
+        sdp: offer.sdp
+      }
+    });
+
+    callDoc.onSnapshot(snapshot => {
+      const data = snapshot.data();
+      if (!pc.currentRemoteDescription && data?.answer) {
+        pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+    });
+
+    answerCandidates.onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === "added") {
+          const candidate = new RTCIceCandidate(change.doc.data());
+          pc.addIceCandidate(candidate);
+        }
+      });
+    });
+  }
+
+  // 🔗 Join Room
+  async function joinRoom() {
+    const roomId = document.getElementById("roomInput").value;
+    const callDoc = db.collection("calls").doc(roomId);
+    const answerCandidates = callDoc.collection("answerCandidates");
+    const offerCandidates = callDoc.collection("offerCandidates");
+
+    pc.onicecandidate = event => {
+      if (event.candidate) {
+        answerCandidates.add(event.candidate.toJSON());
+      }
+    };
+
+    const callData = (await callDoc.get()).data();
+
+    await pc.setRemoteDescription(
+      new RTCSessionDescription(callData.offer)
+    );
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    await callDoc.update({
+      answer: {
+        type: answer.type,
+        sdp: answer.sdp
+      }
+    });
+
+    offerCandidates.onSnapshot(snapshot => {
+      snapshot.docChanges().forEach(change => {
+        if (change.type === "added") {
+          const candidate = new RTCIceCandidate(change.doc.data());
+          pc.addIceCandidate(candidate);
+        }
+      });
+    });
+  }
+</script>
+
+</body>
+</html>
